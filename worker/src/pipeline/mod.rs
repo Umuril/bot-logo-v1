@@ -1,3 +1,4 @@
+pub mod candle_vtracer;
 pub mod external;
 pub mod vtracer_wrapper;
 
