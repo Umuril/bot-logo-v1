@@ -48,8 +48,9 @@ cargo run --release --bin worker candle-vtracer
 ```
 
 This pulls the current chat and existing logo candidates from the bot,
-generates one or more new ideas locally, shows you each result to accept
-or retry, and posts the ones you accept to Discord.
+generates one or more new ideas locally, shows you each result to accept,
+retry, or retry with an edited prompt, and posts the ones you accept to
+Discord.
 
 Options:
 

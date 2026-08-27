@@ -24,7 +24,7 @@ async fn main() -> anyhow::Result<()> {
         PipelineChoice::External { command } => Box::new(ExternalPipeline { command: command.clone() }),
     };
 
-    let (prompt, variant_of, reference_svg_path, reference_png_path) = if let Some(short_name) = &cli.repeat {
+    let (mut prompt, variant_of, reference_svg_path, reference_png_path) = if let Some(short_name) = &cli.repeat {
         let candidate = repeat::find_candidate(&context, short_name)
             .ok_or_else(|| anyhow::anyhow!("no candidate named {short_name:?} in current context"))?;
 
@@ -75,6 +75,10 @@ async fn main() -> anyhow::Result<()> {
                 break;
             }
             Decision::Retry => continue,
+            Decision::RetryWithPrompt(new_prompt) => {
+                prompt = new_prompt;
+                continue;
+            }
             Decision::Abandon => {
                 println!("Abandoned — nothing submitted.");
                 break;
