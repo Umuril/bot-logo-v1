@@ -13,11 +13,14 @@ pub async fn handler(State(state): State<AppState>, AuthenticatedWorker(_worker)
 
     let mut candidate_infos = Vec::with_capacity(candidates.len());
     for candidate in &candidates {
-        let reactions = state
-            .discord
-            .reactions_for_message(state.config.discord_channel_id, candidate.message_id.parse().unwrap_or(0))
-            .await
-            .unwrap_or_default();
+        let reactions = match candidate.message_id.parse::<u64>() {
+            Ok(message_id) => state
+                .discord
+                .reactions_for_message(state.config.discord_channel_id, message_id)
+                .await
+                .unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
 
         candidate_infos.push(CandidateInfo {
             short_name: candidate.short_name.clone(),

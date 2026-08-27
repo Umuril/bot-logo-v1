@@ -2,6 +2,9 @@ use anyhow::Context;
 use rusqlite::{params, Connection};
 use std::sync::{Arc, Mutex};
 
+// token_hash/created_at mirror the full workers row for whoever queries next; no current
+// handler reads them back off a returned Worker (auth only needs id/revoked_at).
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Worker {
     pub id: i64,
@@ -11,6 +14,10 @@ pub struct Worker {
     pub revoked_at: Option<String>,
 }
 
+// id/submitted_by/channel_id/created_at mirror the full candidates row; no current handler
+// reads them back off a returned Candidate (routes look candidates up by short_name, and
+// attribution is written into the Discord caption at submit time, not read back out later).
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Candidate {
     pub id: i64,

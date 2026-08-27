@@ -24,16 +24,23 @@ async fn main() -> anyhow::Result<()> {
         PipelineChoice::External { command } => Box::new(ExternalPipeline { command: command.clone() }),
     };
 
-    let (prompt, variant_of) = if let Some(short_name) = &cli.repeat {
-        let prompt = repeat::find_prompt(&context, short_name)
-            .ok_or_else(|| anyhow::anyhow!("no candidate named {short_name:?} in current context"))?
-            .to_string();
-        (prompt, Some(short_name.clone()))
+    let (prompt, variant_of, reference_svg_path, reference_png_path) = if let Some(short_name) = &cli.repeat {
+        let candidate = repeat::find_candidate(&context, short_name)
+            .ok_or_else(|| anyhow::anyhow!("no candidate named {short_name:?} in current context"))?;
+
+        let reference_dir = std::env::temp_dir().join("worker-repeat");
+        std::fs::create_dir_all(&reference_dir)?;
+        let reference_svg_path = reference_dir.join(format!("{short_name}.svg"));
+        let reference_png_path = reference_dir.join(format!("{short_name}.png"));
+        std::fs::write(&reference_svg_path, bot_client.download(&candidate.svg_url).await?)?;
+        std::fs::write(&reference_png_path, bot_client.download(&candidate.png_url).await?)?;
+
+        (candidate.prompt.clone(), Some(short_name.clone()), Some(reference_svg_path), Some(reference_png_path))
     } else {
         println!("Enter a prompt for the new candidate:");
         let mut input = String::new();
         std::io::stdin().read_line(&mut input)?;
-        (input.trim().to_string(), None)
+        (input.trim().to_string(), None, None, None)
     };
 
     let pipeline_name = match &cli.pipeline {
@@ -46,7 +53,11 @@ async fn main() -> anyhow::Result<()> {
     };
 
     loop {
-        let request = GenerationRequest { prompt: prompt.clone(), reference_svg_path: None, reference_png_path: None };
+        let request = GenerationRequest {
+            prompt: prompt.clone(),
+            reference_svg_path: reference_svg_path.clone(),
+            reference_png_path: reference_png_path.clone(),
+        };
         let svg_path = pipeline.generate(&request)?;
 
         match review::prompt_for_decision(&svg_path)? {

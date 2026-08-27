@@ -19,8 +19,14 @@ fn require_env(key: &str) -> anyhow::Result<String> {
 
 fn require_env_u64(key: &str) -> anyhow::Result<u64> {
     let raw = require_env(key)?;
-    raw.parse()
-        .with_context(|| format!("{key} must be a valid numeric ID, got {raw:?}"))
+    let value: u64 = raw
+        .parse()
+        .with_context(|| format!("{key} must be a valid numeric ID, got {raw:?}"))?;
+    // Discord snowflake IDs are never 0; serenity's Id types panic on 0 rather than erroring,
+    // so a bad value here would crash request handlers deep inside the Discord client instead
+    // of failing loudly at startup.
+    anyhow::ensure!(value != 0, "{key} must not be 0");
+    Ok(value)
 }
 
 impl Config {
