@@ -7,3 +7,4 @@ edition = "2021"
 shared = { path = "../shared" }
 anyhow = "1"
 dotenvy = "0.15"
+rusqlite = { version = "0.31", features = ["bundled"] }

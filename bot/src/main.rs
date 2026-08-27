@@ -1,4 +1,5 @@
 mod config;
+mod db;
 
 fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
