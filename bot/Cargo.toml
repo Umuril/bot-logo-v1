@@ -5,3 +5,5 @@ edition = "2021"
 
 [dependencies]
 shared = { path = "../shared" }
+anyhow = "1"
+dotenvy = "0.15"
