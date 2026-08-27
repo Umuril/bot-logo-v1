@@ -8,3 +8,5 @@ shared = { path = "../shared" }
 anyhow = "1"
 dotenvy = "0.15"
 rusqlite = { version = "0.31", features = ["bundled"] }
+sha2 = "0.10"
+rand = "0.8"
