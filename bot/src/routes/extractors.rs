@@ -6,7 +6,6 @@ use axum::http::{request::Parts, StatusCode};
 
 pub struct AuthenticatedWorker(pub Worker);
 
-#[axum::async_trait]
 impl FromRequestParts<AppState> for AuthenticatedWorker {
     type Rejection = (StatusCode, &'static str);
 

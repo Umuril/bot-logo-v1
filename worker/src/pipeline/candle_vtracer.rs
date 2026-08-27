@@ -1,8 +1,10 @@
 use super::vtracer_wrapper::png_to_svg;
 use super::{GenerationRequest, Pipeline};
+use crate::cli::DeviceChoice;
 use anyhow::{Context, Result};
 use candle_core::{DType, Device, IndexOp, Module, Tensor};
 use candle_transformers::models::stable_diffusion::{self, StableDiffusionConfig};
+use hf_hub::HFClientSync;
 use std::path::PathBuf;
 use tokenizers::Tokenizer;
 
@@ -12,11 +14,12 @@ const TOKENIZER2_REPO: &str = "laion/CLIP-ViT-bigG-14-laion2B-39B-b160k";
 
 pub struct CandleVtracerPipeline {
     pub model: String,
+    pub device: DeviceChoice,
 }
 
 impl CandleVtracerPipeline {
-    pub fn new(model: Option<String>) -> Self {
-        CandleVtracerPipeline { model: model.unwrap_or_else(|| DEFAULT_MODEL.to_string()) }
+    pub fn new(model: Option<String>, device: DeviceChoice) -> Self {
+        CandleVtracerPipeline { model: model.unwrap_or_else(|| DEFAULT_MODEL.to_string()), device }
     }
 
     fn output_paths(&self, prompt: &str) -> (PathBuf, PathBuf) {
@@ -49,37 +52,58 @@ impl CandleVtracerPipeline {
 
         std::fs::create_dir_all(png_path.parent().unwrap())?;
 
-        let device = Device::new_metal(0).unwrap_or(Device::Cpu);
+        let device = match self.device {
+            DeviceChoice::Cpu => Device::Cpu,
+            DeviceChoice::Gpu => Device::new_metal(0).context(
+                "failed to initialize the Metal GPU device; pass --device cpu to run on CPU instead \
+                 (rebuild with `--features metal` if this binary wasn't built with GPU support)",
+            )?,
+        };
         let dtype = DType::F32;
+        let hf_client = HFClientSync::new()?;
 
         let sd_config = StableDiffusionConfig::sdxl_turbo(None, None, None);
 
         println!("candle: building CLIP text embeddings");
         let text_embeddings = {
-            let first =
-                Self::clip_embeddings(prompt, TOKENIZER_REPO, "text_encoder/model.safetensors", &sd_config.clip, &device, dtype)?;
+            let first = Self::clip_embeddings(
+                &hf_client,
+                prompt,
+                TOKENIZER_REPO,
+                "text_encoder/model.safetensors",
+                &sd_config.clip,
+                &device,
+                dtype,
+            )?;
             let clip2_config = sd_config.clip2.as_ref().context("sdxl_turbo config is missing its second CLIP config")?;
-            let second =
-                Self::clip_embeddings(prompt, TOKENIZER2_REPO, "text_encoder_2/model.safetensors", clip2_config, &device, dtype)?;
+            let second = Self::clip_embeddings(
+                &hf_client,
+                prompt,
+                TOKENIZER2_REPO,
+                "text_encoder_2/model.safetensors",
+                clip2_config,
+                &device,
+                dtype,
+            )?;
             Tensor::cat(&[first, second], candle_core::D::Minus1)?
         };
 
         println!("candle: building VAE");
-        let vae_weights = hf_hub::api::sync::Api::new()?
-            .model(DEFAULT_MODEL.to_string())
-            .get("vae/diffusion_pytorch_model.safetensors")?;
+        let vae_weights = Self::hf_download(&hf_client, DEFAULT_MODEL, "vae/diffusion_pytorch_model.safetensors")?;
         let vae = sd_config.build_vae(vae_weights, &device, dtype)?;
 
         println!("candle: building UNet");
-        let unet_weights = hf_hub::api::sync::Api::new()?
-            .model(DEFAULT_MODEL.to_string())
-            .get("unet/diffusion_pytorch_model.safetensors")?;
+        let unet_weights = Self::hf_download(&hf_client, DEFAULT_MODEL, "unet/diffusion_pytorch_model.safetensors")?;
         let unet = sd_config.build_unet(unet_weights, &device, 4, false, dtype)?;
 
         let n_steps = 1; // candle's own default step count for Turbo
         let mut scheduler = sd_config.build_scheduler(n_steps)?;
-        let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
-        device.set_seed(seed)?;
+        // The CPU backend can't seed its RNG (candle_core::cpu_backend always errors on
+        // set_seed), so runs on CPU are non-deterministic; GPU backends do support it.
+        if !device.is_cpu() {
+            let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
+            device.set_seed(seed)?;
+        }
 
         let vae_scale = 0.13025; // candle's own constant for the Turbo/XL VAE
 
@@ -103,7 +127,14 @@ impl CandleVtracerPipeline {
         Ok(())
     }
 
+    /// Downloads `filename` from `repo_id` (an "owner/name" HF repo id) into the local cache.
+    fn hf_download(client: &HFClientSync, repo_id: &str, filename: &str) -> Result<PathBuf> {
+        let (owner, name) = repo_id.split_once('/').with_context(|| format!("repo id {repo_id:?} is not in owner/name form"))?;
+        Ok(client.model(owner, name).download_file().filename(filename).send()?)
+    }
+
     fn clip_embeddings(
+        hf_client: &HFClientSync,
         prompt: &str,
         tokenizer_repo: &str,
         clip_weights_file: &str,
@@ -111,7 +142,7 @@ impl CandleVtracerPipeline {
         device: &Device,
         dtype: DType,
     ) -> Result<Tensor> {
-        let tokenizer_path = hf_hub::api::sync::Api::new()?.model(tokenizer_repo.to_string()).get("tokenizer.json")?;
+        let tokenizer_path = Self::hf_download(hf_client, tokenizer_repo, "tokenizer.json")?;
         let tokenizer = Tokenizer::from_file(tokenizer_path).map_err(anyhow::Error::msg)?;
         let pad_id = match &clip_config.pad_with {
             Some(padding) => *tokenizer.get_vocab(true).get(padding.as_str()).context("pad token missing from vocab")?,
@@ -127,7 +158,7 @@ impl CandleVtracerPipeline {
         }
         let tokens = Tensor::new(tokens.as_slice(), device)?.unsqueeze(0)?;
 
-        let clip_weights = hf_hub::api::sync::Api::new()?.model(DEFAULT_MODEL.to_string()).get(clip_weights_file)?;
+        let clip_weights = Self::hf_download(hf_client, DEFAULT_MODEL, clip_weights_file)?;
         let text_model = stable_diffusion::build_clip_transformer(clip_config, clip_weights, device, DType::F32)?;
         let embeddings = text_model.forward(&tokens)?;
         Ok(embeddings.to_dtype(dtype)?)

@@ -1,5 +1,5 @@
 use quick_xml::events::{BytesStart, Event};
-use quick_xml::{Reader, Writer};
+use quick_xml::{Reader, Writer, XmlVersion};
 use std::io::Cursor;
 
 const DISALLOWED_ELEMENTS: &[&str] = &["script", "foreignObject", "iframe"];
@@ -17,10 +17,10 @@ fn is_disallowed_attr(name: &str, value: &str) -> bool {
 }
 
 fn filter_attrs<'a>(e: &BytesStart<'a>) -> BytesStart<'a> {
-    let mut new_elem = BytesStart::new(String::from_utf8_lossy(e.name().as_ref()).to_string());
+    let mut new_elem = BytesStart::new(e.name().0.to_string());
     for attr in e.attributes().flatten() {
-        let name = String::from_utf8_lossy(attr.key.as_ref()).to_string();
-        let value = attr.unescape_value().unwrap_or_default().to_string();
+        let name = attr.key.as_ref().to_string();
+        let value = attr.normalized_value(XmlVersion::Implicit1_0).unwrap_or_default().to_string();
         if !is_disallowed_attr(&name, &value) {
             new_elem.push_attribute((name.as_str(), value.as_str()));
         }
@@ -38,7 +38,7 @@ pub fn sanitize(input: &str) -> String {
         match reader.read_event() {
             Ok(Event::Eof) => break,
             Ok(Event::Start(e)) => {
-                let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                let name = e.name().as_ref().to_string();
                 if DISALLOWED_ELEMENTS.iter().any(|d| d.eq_ignore_ascii_case(&name)) {
                     skip_depth += 1;
                     continue;
@@ -49,7 +49,7 @@ pub fn sanitize(input: &str) -> String {
                 writer.write_event(Event::Start(filter_attrs(&e))).unwrap();
             }
             Ok(Event::Empty(e)) => {
-                let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                let name = e.name().as_ref().to_string();
                 if DISALLOWED_ELEMENTS.iter().any(|d| d.eq_ignore_ascii_case(&name)) {
                     continue;
                 }
@@ -59,7 +59,7 @@ pub fn sanitize(input: &str) -> String {
                 writer.write_event(Event::Empty(filter_attrs(&e))).unwrap();
             }
             Ok(Event::End(e)) => {
-                let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                let name = e.name().as_ref().to_string();
                 if DISALLOWED_ELEMENTS.iter().any(|d| d.eq_ignore_ascii_case(&name)) {
                     skip_depth = skip_depth.saturating_sub(1);
                     continue;

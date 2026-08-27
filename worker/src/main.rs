@@ -20,7 +20,7 @@ async fn main() -> anyhow::Result<()> {
     let context = bot_client.fetch_context().await?;
 
     let pipeline: Box<dyn Pipeline> = match &cli.pipeline {
-        PipelineChoice::CandleVtracer { model } => Box::new(CandleVtracerPipeline::new(model.clone())),
+        PipelineChoice::CandleVtracer { model, device } => Box::new(CandleVtracerPipeline::new(model.clone(), *device)),
         PipelineChoice::External { command } => Box::new(ExternalPipeline { command: command.clone() }),
     };
 
@@ -48,7 +48,7 @@ async fn main() -> anyhow::Result<()> {
         PipelineChoice::External { .. } => "external",
     };
     let model_name = match &cli.pipeline {
-        PipelineChoice::CandleVtracer { model } => model.clone().unwrap_or_else(|| "stabilityai/sdxl-turbo".to_string()),
+        PipelineChoice::CandleVtracer { model, .. } => model.clone().unwrap_or_else(|| "stabilityai/sdxl-turbo".to_string()),
         PipelineChoice::External { command } => command.join(" "),
     };
 

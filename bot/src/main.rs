@@ -31,8 +31,8 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/context", get(routes::context::handler))
         .route("/submit", post(routes::submit::handler))
-        .route("/candidates/:short_name/svg", get(routes::candidates::svg_handler))
-        .route("/candidates/:short_name/png", get(routes::candidates::png_handler))
+        .route("/candidates/{short_name}/svg", get(routes::candidates::svg_handler))
+        .route("/candidates/{short_name}/png", get(routes::candidates::png_handler))
         .route("/discord/interactions", post(routes::interactions::handler))
         .with_state(state);
 

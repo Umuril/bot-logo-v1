@@ -1,16 +1,16 @@
 use crate::db::{Db, Worker};
-use rand::RngCore;
+use rand::Rng;
 use sha2::{Digest, Sha256};
 
 pub fn hash_token(raw: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(raw.as_bytes());
-    format!("{:x}", hasher.finalize())
+    hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect()
 }
 
 pub fn generate_token() -> String {
     let mut bytes = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut bytes);
+    rand::rng().fill_bytes(&mut bytes);
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 

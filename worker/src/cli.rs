@@ -1,4 +1,10 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum DeviceChoice {
+    Cpu,
+    Gpu,
+}
 
 #[derive(Debug, Parser)]
 #[command(name = "worker")]
@@ -16,6 +22,10 @@ pub enum PipelineChoice {
     CandleVtracer {
         #[arg(long)]
         model: Option<String>,
+        /// Which device to run inference on. Defaults to GPU (Metal); the CPU backend
+        /// can't seed its RNG, so seeding is skipped when running on CPU.
+        #[arg(long, value_enum, default_value = "gpu")]
+        device: DeviceChoice,
     },
     /// Shell out to any external generation command
     External {
