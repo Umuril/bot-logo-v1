@@ -5,12 +5,18 @@ use anyhow::{Context, Result};
 use candle_core::{DType, Device, IndexOp, Module, Tensor};
 use candle_transformers::models::stable_diffusion::{self, StableDiffusionConfig};
 use hf_hub::HFClientSync;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 use tokenizers::Tokenizer;
 
 const DEFAULT_MODEL: &str = "stabilityai/sdxl-turbo";
 const TOKENIZER_REPO: &str = "openai/clip-vit-large-patch14";
 const TOKENIZER2_REPO: &str = "laion/CLIP-ViT-bigG-14-laion2B-39B-b160k";
+
+/// How long a resolved model file path is trusted without re-checking `hf-hub`'s cache
+/// (which itself still makes a network round-trip on every call, even on a local cache hit,
+/// unless pinned to a commit hash — see `hf_download`).
+const HF_CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 
 pub struct CandleVtracerPipeline {
     pub model: String,
@@ -64,8 +70,7 @@ impl CandleVtracerPipeline {
 
         let sd_config = StableDiffusionConfig::sdxl_turbo(None, None, None);
 
-        println!("candle: building CLIP text embeddings");
-        let text_embeddings = {
+        let text_embeddings = Self::timed("building CLIP text embeddings", || {
             let first = Self::clip_embeddings(
                 &hf_client,
                 prompt,
@@ -85,16 +90,18 @@ impl CandleVtracerPipeline {
                 &device,
                 dtype,
             )?;
-            Tensor::cat(&[first, second], candle_core::D::Minus1)?
-        };
+            Ok(Tensor::cat(&[first, second], candle_core::D::Minus1)?)
+        })?;
 
-        println!("candle: building VAE");
-        let vae_weights = Self::hf_download(&hf_client, DEFAULT_MODEL, "vae/diffusion_pytorch_model.safetensors")?;
-        let vae = sd_config.build_vae(vae_weights, &device, dtype)?;
+        let vae = Self::timed("building VAE", || {
+            let vae_weights = Self::hf_download(&hf_client, DEFAULT_MODEL, "vae/diffusion_pytorch_model.safetensors")?;
+            Ok(sd_config.build_vae(vae_weights, &device, dtype)?)
+        })?;
 
-        println!("candle: building UNet");
-        let unet_weights = Self::hf_download(&hf_client, DEFAULT_MODEL, "unet/diffusion_pytorch_model.safetensors")?;
-        let unet = sd_config.build_unet(unet_weights, &device, 4, false, dtype)?;
+        let unet = Self::timed("building UNet", || {
+            let unet_weights = Self::hf_download(&hf_client, DEFAULT_MODEL, "unet/diffusion_pytorch_model.safetensors")?;
+            Ok(sd_config.build_unet(unet_weights, &device, 4, false, dtype)?)
+        })?;
 
         let n_steps = 1; // candle's own default step count for Turbo
         let mut scheduler = sd_config.build_scheduler(n_steps)?;
@@ -110,27 +117,78 @@ impl CandleVtracerPipeline {
         let latents = Tensor::randn(0f32, 1f32, (1, 4, sd_config.height / 8, sd_config.width / 8), &device)?;
         let mut latents = (latents * scheduler.init_noise_sigma())?.to_dtype(dtype)?;
 
-        println!("candle: sampling");
-        for &timestep in scheduler.timesteps().to_vec().iter() {
-            let latent_model_input = scheduler.scale_model_input(latents.clone(), timestep)?;
-            let noise_pred = unet.forward(&latent_model_input, timestep as f64, &text_embeddings)?;
-            latents = scheduler.step(&noise_pred, timestep, &latents)?;
-        }
+        Self::timed("sampling", || {
+            for &timestep in scheduler.timesteps().to_vec().iter() {
+                let latent_model_input = scheduler.scale_model_input(latents.clone(), timestep)?;
+                let noise_pred = unet.forward(&latent_model_input, timestep as f64, &text_embeddings)?;
+                latents = scheduler.step(&noise_pred, timestep, &latents)?;
+            }
+            Ok(())
+        })?;
 
-        println!("candle: decoding and saving PNG");
-        let images = vae.decode(&(latents / vae_scale)?)?;
-        let images = ((images / 2.)? + 0.5)?.to_device(&Device::Cpu)?;
-        let images = (images.clamp(0f32, 1.)? * 255.)?.to_dtype(DType::U8)?;
-        let image_tensor = images.i(0)?;
-        Self::save_png(&image_tensor, png_path)?;
+        Self::timed("decoding and saving PNG", || {
+            let images = vae.decode(&(latents / vae_scale)?)?;
+            let images = ((images / 2.)? + 0.5)?.to_device(&Device::Cpu)?;
+            let images = (images.clamp(0f32, 1.)? * 255.)?.to_dtype(DType::U8)?;
+            let image_tensor = images.i(0)?;
+            Self::save_png(&image_tensor, png_path)?;
+            Ok(())
+        })?;
 
         Ok(())
     }
 
+    /// Runs `f` under `label`, printing how long it took. Useful for confirming the
+    /// `HF_CACHE_TTL` disk cache in `hf_download` is actually skipping the network round-trip
+    /// on a warm run (a cache hit should make "building VAE"/"building UNet" near-instant).
+    fn timed<T>(label: &str, f: impl FnOnce() -> Result<T>) -> Result<T> {
+        println!("candle: {label}...");
+        let start = std::time::Instant::now();
+        let result = f();
+        println!("candle: {label} done in {:.2?}", start.elapsed());
+        result
+    }
+
     /// Downloads `filename` from `repo_id` (an "owner/name" HF repo id) into the local cache.
+    /// Skips `hf-hub` (and the network round-trip it makes even on a cache hit) entirely if we
+    /// already resolved this file within `HF_CACHE_TTL`.
     fn hf_download(client: &HFClientSync, repo_id: &str, filename: &str) -> Result<PathBuf> {
+        let marker = Self::ttl_marker_path(repo_id, filename);
+        if let Some(cached) = Self::read_fresh_marker(&marker, HF_CACHE_TTL) {
+            return Ok(cached);
+        }
+
         let (owner, name) = repo_id.split_once('/').with_context(|| format!("repo id {repo_id:?} is not in owner/name form"))?;
-        Ok(client.model(owner, name).download_file().filename(filename).send()?)
+        let path = client.model(owner, name).download_file().filename(filename).send()?;
+        Self::write_marker(&marker, &path)?;
+        Ok(path)
+    }
+
+    /// Sidecar file path used to remember when `repo_id`/`filename` was last resolved.
+    fn ttl_marker_path(repo_id: &str, filename: &str) -> PathBuf {
+        let key: String =
+            format!("{repo_id}/{filename}").chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+        std::env::temp_dir().join("worker-candle-vtracer").join("hf-cache-ttl").join(key)
+    }
+
+    /// Returns the marker's stored path if it was written less than `ttl` ago and that path
+    /// still exists on disk.
+    fn read_fresh_marker(marker: &Path, ttl: Duration) -> Option<PathBuf> {
+        let metadata = std::fs::metadata(marker).ok()?;
+        let age = metadata.modified().ok()?.elapsed().ok()?;
+        if age >= ttl {
+            return None;
+        }
+        let cached_path = PathBuf::from(std::fs::read_to_string(marker).ok()?);
+        cached_path.exists().then_some(cached_path)
+    }
+
+    /// Records `resolved_path` under `marker`, resetting the TTL window (the file's mtime is
+    /// the timestamp `read_fresh_marker` checks).
+    fn write_marker(marker: &Path, resolved_path: &Path) -> Result<()> {
+        std::fs::create_dir_all(marker.parent().unwrap())?;
+        std::fs::write(marker, resolved_path.to_string_lossy().as_bytes())?;
+        Ok(())
     }
 
     fn clip_embeddings(
@@ -181,5 +239,69 @@ impl Pipeline for CandleVtracerPipeline {
         self.run_inference(&request.prompt, &png_path)?;
         png_to_svg(&png_path, &svg_path)?;
         Ok(svg_path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Unique per-test scratch dir so parallel test runs don't collide on the same marker path.
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join("worker-candle-vtracer-test").join(format!("{name}-{:?}", std::thread::current().id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn read_fresh_marker_missing_returns_none() {
+        let marker = scratch_dir("missing").join("marker");
+        assert!(CandleVtracerPipeline::read_fresh_marker(&marker, Duration::from_secs(3600)).is_none());
+    }
+
+    #[test]
+    fn write_then_read_fresh_marker_round_trips() {
+        let dir = scratch_dir("roundtrip");
+        let marker = dir.join("marker");
+        let resolved = dir.join("weights.safetensors");
+        std::fs::write(&resolved, b"stub").unwrap();
+
+        CandleVtracerPipeline::write_marker(&marker, &resolved).unwrap();
+
+        assert_eq!(CandleVtracerPipeline::read_fresh_marker(&marker, Duration::from_secs(3600)), Some(resolved));
+    }
+
+    #[test]
+    fn read_fresh_marker_expired_returns_none() {
+        let dir = scratch_dir("expired");
+        let marker = dir.join("marker");
+        let resolved = dir.join("weights.safetensors");
+        std::fs::write(&resolved, b"stub").unwrap();
+
+        CandleVtracerPipeline::write_marker(&marker, &resolved).unwrap();
+
+        // A zero-length TTL means any elapsed time (even a few nanoseconds) counts as expired.
+        assert!(CandleVtracerPipeline::read_fresh_marker(&marker, Duration::ZERO).is_none());
+    }
+
+    #[test]
+    fn read_fresh_marker_stale_target_returns_none() {
+        let dir = scratch_dir("stale-target");
+        let marker = dir.join("marker");
+        let resolved = dir.join("weights.safetensors");
+        std::fs::write(&resolved, b"stub").unwrap();
+
+        CandleVtracerPipeline::write_marker(&marker, &resolved).unwrap();
+        std::fs::remove_file(&resolved).unwrap();
+
+        assert!(CandleVtracerPipeline::read_fresh_marker(&marker, Duration::from_secs(3600)).is_none());
+    }
+
+    #[test]
+    fn ttl_marker_path_is_stable_and_filesystem_safe() {
+        let path = CandleVtracerPipeline::ttl_marker_path("stabilityai/sdxl-turbo", "vae/diffusion_pytorch_model.safetensors");
+        assert_eq!(path, CandleVtracerPipeline::ttl_marker_path("stabilityai/sdxl-turbo", "vae/diffusion_pytorch_model.safetensors"));
+        assert!(path.file_name().unwrap().to_str().unwrap().chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
     }
 }
