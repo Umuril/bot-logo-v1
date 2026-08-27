@@ -1,5 +1,16 @@
-FROM rust:1-slim AS builder
+FROM lukemathwalker/cargo-chef:latest-rust-slim AS chef
 WORKDIR /app
+
+FROM chef AS planner
+COPY Cargo.toml Cargo.lock ./
+COPY shared ./shared
+COPY bot ./bot
+COPY worker ./worker
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder
+COPY --from=planner /app/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json -p bot
 COPY Cargo.toml Cargo.lock ./
 COPY shared ./shared
 COPY bot ./bot
