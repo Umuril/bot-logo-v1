@@ -20,7 +20,7 @@ async fn main() -> anyhow::Result<()> {
     std::fs::create_dir_all(&config.data_dir)?;
 
     let db = db::Db::open(&config.database_path)?;
-    let discord = discord::DiscordClient::new(&config.discord_bot_token);
+    let discord = discord::DiscordClient::new(&config.discord_bot_token, config.discord_application_id);
 
     commands::register(&discord, config.discord_guild_id).await?;
     println!("bot: slash commands registered");

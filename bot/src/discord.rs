@@ -1,6 +1,6 @@
 use serenity::builder::{CreateAttachment, CreateCommand, CreateMessage};
 use serenity::http::Http;
-use serenity::model::id::{ChannelId, GuildId, MessageId, RoleId, UserId};
+use serenity::model::id::{ApplicationId, ChannelId, GuildId, MessageId, RoleId, UserId};
 use shared::{ChatMessage, ReactionCount};
 
 pub struct DiscordClient {
@@ -8,8 +8,10 @@ pub struct DiscordClient {
 }
 
 impl DiscordClient {
-    pub fn new(bot_token: &str) -> Self {
-        DiscordClient { http: Http::new(bot_token) }
+    pub fn new(bot_token: &str, application_id: u64) -> Self {
+        let http = Http::new(bot_token);
+        http.set_application_id(ApplicationId::new(application_id));
+        DiscordClient { http }
     }
 
     pub async fn has_role(&self, guild_id: u64, user_id: u64, role_id: u64) -> anyhow::Result<bool> {

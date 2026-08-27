@@ -4,6 +4,7 @@ use anyhow::Context;
 pub struct Config {
     pub discord_bot_token: String,
     pub discord_public_key: String,
+    pub discord_application_id: u64,
     pub discord_guild_id: u64,
     pub discord_channel_id: u64,
     pub discord_allowed_role_id: u64,
@@ -34,6 +35,7 @@ impl Config {
         Ok(Config {
             discord_bot_token: require_env("DISCORD_BOT_TOKEN")?,
             discord_public_key: require_env("DISCORD_PUBLIC_KEY")?,
+            discord_application_id: require_env_u64("DISCORD_APPLICATION_ID")?,
             discord_guild_id: require_env_u64("DISCORD_GUILD_ID")?,
             discord_channel_id: require_env_u64("DISCORD_CHANNEL_ID")?,
             discord_allowed_role_id: require_env_u64("DISCORD_ALLOWED_ROLE_ID")?,

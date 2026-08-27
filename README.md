@@ -20,8 +20,8 @@ Design doc: [`.claude/specs/2026-08-27-discord-logo-bot-design.md`](.claude/spec
 
 ```bash
 cp .env.example .env
-# fill in DISCORD_BOT_TOKEN, DISCORD_PUBLIC_KEY, DISCORD_GUILD_ID,
-# DISCORD_CHANNEL_ID, DISCORD_ALLOWED_ROLE_ID, LOGO_BRIEF
+# fill in DISCORD_BOT_TOKEN, DISCORD_PUBLIC_KEY, DISCORD_APPLICATION_ID,
+# DISCORD_GUILD_ID, DISCORD_CHANNEL_ID, DISCORD_ALLOWED_ROLE_ID, LOGO_BRIEF
 cargo run --release --bin bot
 ```
 
