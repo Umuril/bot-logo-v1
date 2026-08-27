@@ -10,3 +10,7 @@ dotenvy = "0.15"
 rusqlite = { version = "0.31", features = ["bundled"] }
 sha2 = "0.10"
 rand = "0.8"
+quick-xml = "0.36"
+resvg = "0.44"
+usvg = "0.44"
+tiny-skia = "0.11"
