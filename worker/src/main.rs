@@ -12,9 +12,9 @@ use shared::SubmitRequest;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let cli = Cli::parse_args();
     dotenvy::from_filename("worker.env").ok();
     let config = config::Config::from_env()?;
-    let cli = Cli::parse_args();
     let bot_client = client::BotClient::new(&config);
 
     let context = bot_client.fetch_context().await?;
