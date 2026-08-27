@@ -14,3 +14,4 @@ quick-xml = "0.36"
 resvg = "0.44"
 usvg = "0.44"
 tiny-skia = "0.11"
+serenity = { version = "0.12", default-features = false, features = ["http", "builder", "model", "rustls_backend"] }

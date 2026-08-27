@@ -1,6 +1,7 @@
 mod auth;
 mod config;
 mod db;
+mod discord;
 mod svg;
 
 fn main() -> anyhow::Result<()> {
