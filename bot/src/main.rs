@@ -2,7 +2,9 @@ mod auth;
 mod config;
 mod db;
 mod discord;
+mod routes;
 mod signature;
+mod state;
 mod svg;
 
 fn main() -> anyhow::Result<()> {
