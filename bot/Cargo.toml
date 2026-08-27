@@ -15,3 +15,5 @@ resvg = "0.44"
 usvg = "0.44"
 tiny-skia = "0.11"
 serenity = { version = "0.12", default-features = false, features = ["http", "builder", "model", "rustls_backend"] }
+ed25519-dalek = "2"
+hex = "0.4"
