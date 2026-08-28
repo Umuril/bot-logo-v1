@@ -32,6 +32,13 @@ pub enum PipelineChoice {
         #[arg(trailing_var_arg = true, required = true)]
         command: Vec<String>,
     },
+    /// LLM-authored SVG via the `claude` CLI (uses your existing Claude subscription login)
+    ClaudeSvg,
+    /// LLM-authored SVG via a local candle-hosted model (Qwen2.5-Coder-7B-Instruct)
+    LlmSvg {
+        #[arg(long, value_enum, default_value = "gpu")]
+        device: DeviceChoice,
+    },
 }
 
 impl Cli {

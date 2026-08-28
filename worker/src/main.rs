@@ -6,7 +6,10 @@ mod repeat;
 mod review;
 
 use cli::{Cli, PipelineChoice};
-use pipeline::{candle_vtracer::CandleVtracerPipeline, external::ExternalPipeline, GenerationRequest, Pipeline};
+use pipeline::{
+    candle_vtracer::CandleVtracerPipeline, claude_svg::ClaudeSvgPipeline, external::ExternalPipeline,
+    local_llm_svg::LocalLlmSvgPipeline, GenerationRequest, Pipeline,
+};
 use review::Decision;
 use shared::SubmitRequest;
 
@@ -22,6 +25,8 @@ async fn main() -> anyhow::Result<()> {
     let pipeline: Box<dyn Pipeline> = match &cli.pipeline {
         PipelineChoice::CandleVtracer { model, device } => Box::new(CandleVtracerPipeline::new(model.clone(), *device)),
         PipelineChoice::External { command } => Box::new(ExternalPipeline { command: command.clone() }),
+        PipelineChoice::ClaudeSvg => Box::new(ClaudeSvgPipeline),
+        PipelineChoice::LlmSvg { device } => Box::new(LocalLlmSvgPipeline::new(*device)),
     };
 
     let (mut prompt, variant_of, reference_svg_path, reference_png_path) = if let Some(short_name) = &cli.repeat {
@@ -46,10 +51,14 @@ async fn main() -> anyhow::Result<()> {
     let pipeline_name = match &cli.pipeline {
         PipelineChoice::CandleVtracer { .. } => "candle-vtracer",
         PipelineChoice::External { .. } => "external",
+        PipelineChoice::ClaudeSvg => "claude-svg",
+        PipelineChoice::LlmSvg { .. } => "llm-svg",
     };
     let model_name = match &cli.pipeline {
         PipelineChoice::CandleVtracer { model, .. } => model.clone().unwrap_or_else(|| "stabilityai/sdxl-turbo".to_string()),
         PipelineChoice::External { command } => command.join(" "),
+        PipelineChoice::ClaudeSvg => "claude-cli".to_string(),
+        PipelineChoice::LlmSvg { .. } => "Qwen/Qwen2.5-Coder-7B-Instruct".to_string(),
     };
 
     loop {
